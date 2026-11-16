@@ -14,9 +14,15 @@ Ele busca vagas de Assistente Social e Analista Social e avisa no Telegram.
 - Novo modo de teste: `DRY_RUN=1` mostra os alertas no terminal sem enviar nada.
 - `rodar_gupy.bat` agora roda na própria pasta.
 
+## Prefeitura de Belo Horizonte (fonte nova)
+O bot lê duas páginas da PBH:
+- **Oportunidades de trabalho** (editais novos e em andamento): abre cada edital, lê o "período da inscrição" e avisa só os que **ainda estão abertos** e citam Assistente Social, Serviço Social ou Analista Social. A lista da PBH marca como "em andamento" editais antigos já encerrados, por isso o bot confere a data.
+- **Saúde, processos seletivos:** avisa os editais de Assistente Social da seção "em andamento" que ainda não têm resultado. O prazo está no PDF do edital. Seleções de Referência Técnica podem ser restritas a servidores, então confirme no edital.
+
+Para desligar, use `PBH_ATIVO = False` no `main.py`.
+
 ## O que o bot NÃO cobre
-Editais da PBH, Instituto Elo, Quatre, concursos e tribunais não passam por essas plataformas. Continue conferindo:
-- https://prefeitura.pbh.gov.br/oportunidades-de-trabalho
+Instituto Elo, Quatre, URBEL, concursos e tribunais não passam pelo bot. Continue conferindo:
 - https://www.parceriaspublicas.institutoelo.org.br/trabalhe-conosco
 - https://quatre.com.br/oportunidades/assistente-social-bh/
 

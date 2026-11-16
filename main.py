@@ -5,6 +5,7 @@ import sqlite3
 import requests
 import unicodedata
 import xml.etree.ElementTree as ET
+import html as html_lib
 from datetime import datetime, timedelta
 
 try:
@@ -783,6 +784,168 @@ def buscar_vagas_solides(conn, cursor):
                 print(f"   ⚠️  Erro: {e}")
                 break
 
+# --- 9. PREFEITURA DE BELO HORIZONTE ---
+
+PBH_BASE      = "https://prefeitura.pbh.gov.br"
+PBH_URL_LISTA = PBH_BASE + "/oportunidades-de-trabalho"
+PBH_URL_SAUDE = PBH_BASE + "/saude/informacoes/gestao-de-pessoas/processos-seletivos"
+PBH_ATIVO     = True   # False desliga as duas buscas da PBH
+
+# Cargos de Serviço Social nos editais da PBH.
+PBH_CARGO_SOCIAL = re.compile(r"assistente social|servi[cç]o social|analista social", re.I)
+
+def _pbh_get(url, params=None):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept-Language': 'pt-BR,pt;q=0.9',
+    }
+    resp = requests.get(url, params=params, headers=headers, timeout=30)
+    resp.raise_for_status()
+    return resp.text
+
+def _pbh_texto(pagina):
+    pagina = re.sub(r'(?is)<(script|style).*?</\1>', ' ', pagina)
+    texto = re.sub(r'<[^>]+>', ' ', pagina)
+    texto = html_lib.unescape(texto).replace('\xa0', ' ')
+    return re.sub(r'\s+', ' ', texto)
+
+def _pbh_periodo(texto):
+    """Lê 'PERÍODO DA INSCRIÇÃO: dd/mm/aaaa até dd/mm/aaaa'. Retorna (inicio, fim) ou (None, None)."""
+    m = re.search(r'PER[IÍ]ODO DA INSCRI[CÇ][AÃ]O:\s*(\d{2}/\d{2}/\d{4})\s*(?:at[eé]|a)\s*(\d{2}/\d{2}/\d{4})', texto, re.I)
+    if not m:
+        return None, None
+    try:
+        return (datetime.strptime(m.group(1), "%d/%m/%Y"), datetime.strptime(m.group(2), "%d/%m/%Y"))
+    except ValueError:
+        return None, None
+
+def _pbh_marcar_visto(conn, cursor, link, data_f, titulo):
+    """Guarda o edital no banco para não reabrir a página a cada execução."""
+    cursor.execute('INSERT OR IGNORE INTO vagas_enviadas VALUES (?, ?, ?)', (link, data_f, titulo))
+    conn.commit()
+
+def buscar_vagas_pbh_editais(conn, cursor):
+    """Lista geral de oportunidades da PBH (novos e em andamento).
+    Abre cada edital, confere o prazo de inscrição e avisa os que estão abertos e têm Serviço Social."""
+    print("\n🏛️  PBH · EDITAIS GERAIS — iniciando varredura...")
+    vistos = set()
+    hoje = datetime.now().date()
+
+    for situacao, rotulo in (("1", "novos"), ("2", "em andamento")):
+        print(f"\n   🔎 Editais {rotulo}...")
+        try:
+            lista = _pbh_get(PBH_URL_LISTA, {"field_situacao_processo_seletivo_value": situacao})
+        except Exception as e:
+            print(f"   ⚠️  Erro ao abrir a lista: {e}")
+            continue
+
+        itens = re.findall(r'href="(/[^"#?]*/oportunidades-de-trabalho/[^"#?]+)"[^>]*>([^<]*)<', lista)
+        if not itens:
+            print("   🔚 Nenhum edital encontrado (a página pode ter mudado).")
+            continue
+
+        for caminho, titulo_raw in itens:
+            link = PBH_BASE + caminho
+            if link in vistos:
+                continue
+            vistos.add(link)
+            if ja_enviada(cursor, link):
+                continue
+
+            titulo = html_lib.unescape(titulo_raw).replace('\xa0', ' ').strip() or "Edital PBH"
+            try:
+                texto = _pbh_texto(_pbh_get(link))
+                time.sleep(0.5)   # pausa entre páginas, para não sobrecarregar o site da PBH
+            except Exception as e:
+                print(f"   ⚠️  Erro ao abrir {titulo[:50]}: {e}")
+                continue
+
+            inicio, fim = _pbh_periodo(texto)
+            if fim is None:
+                print(f"   ❔ Sem período de inscrição: {titulo[:60]}")
+                continue
+            if fim.date() < hoje:
+                _pbh_marcar_visto(conn, cursor, link, fim.strftime("%d/%m/%Y"), "[PBH encerrado] " + titulo[:120])
+                continue
+
+            achou = PBH_CARGO_SOCIAL.search(texto)
+            if not achou:
+                _pbh_marcar_visto(conn, cursor, link, fim.strftime("%d/%m/%Y"), "[PBH sem Serviço Social] " + titulo[:120])
+                print(f"   🚫 Aberto, sem Serviço Social: {titulo[:60]}")
+                continue
+
+            trecho = texto[max(0, achou.start() - 40): achou.end() + 90].strip()
+            orgao = titulo.split(" -Edital")[0].split(" - Edital")[0].strip()
+            nivel_match, techs = calcular_match(titulo + " " + achou.group(0))
+            techs_str = " · ".join(t.upper() for t in techs[:4]) if techs else "Verificar edital"
+
+            mensagem = (
+                f"🏛️ <b>PREFEITURA DE BH — {html_lib.escape(rotulo.upper())}</b>\n\n"
+                f"💼 <b>Edital:</b> {html_lib.escape(titulo)}\n"
+                f"🏢 <b>Órgão:</b> {html_lib.escape(orgao)}\n"
+                f"🧾 <b>Trecho do cargo:</b> <i>{html_lib.escape(trecho)}</i>\n"
+                f"📅 <b>Inscrição:</b> {inicio.strftime('%d/%m/%Y') if inicio else '?'} até <b>{fim.strftime('%d/%m/%Y')}</b>\n"
+                f"📊 <b>Match:</b> {nivel_match} · <i>{techs_str}</i>\n\n"
+                f"🔗 <a href='{link}'>Abrir o edital</a>"
+            )
+            registrar_e_enviar(conn, cursor, link, titulo, orgao, fim.strftime("%d/%m/%Y"), mensagem, "PBH", nivel_match)
+
+def buscar_vagas_pbh_saude(conn, cursor):
+    """Página de processos seletivos da Saúde (Referência Técnica, TSS etc.).
+    Lê a seção 'EM ANDAMENTO' e avisa os editais de Assistente Social ainda sem resultado."""
+    print("\n🏥 PBH · SAÚDE — iniciando varredura...")
+    try:
+        pagina = _pbh_get(PBH_URL_SAUDE)
+    except Exception as e:
+        print(f"   ⚠️  Erro ao abrir a página: {e}")
+        return
+
+    corpo = pagina[pagina.find('<body'):]
+    ini = corpo.find('EM ANDAMENTO')
+    fim = corpo.find('FINALIZADOS', ini) if ini >= 0 else -1
+    if ini < 0 or fim < 0:
+        print("   🔚 Seção 'em andamento' não encontrada (a página pode ter mudado).")
+        return
+
+    secao = corpo[ini:fim]
+    total = achados = 0
+    for m in re.finditer(r'<p><strong>(SELE[^<]*)</strong></p>\s*<p>(.*?)</p>', secao, re.S):
+        total += 1
+        titulo = html_lib.unescape(re.sub(r'<[^>]+>', '', m.group(1))).replace('\xa0', ' ').strip()
+        bloco = m.group(2)
+        if not PBH_CARGO_SOCIAL.search(titulo):
+            continue
+        if 'resultado' in bloco.lower():
+            continue   # já tem resultado publicado
+
+        a = re.search(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', bloco, re.S)
+        if not a:
+            continue
+        link = PBH_BASE + a.group(1) if a.group(1).startswith('/') else a.group(1)
+        edital = html_lib.unescape(re.sub(r'<[^>]+>', '', a.group(2))).replace('\xa0', ' ').strip()
+        if ja_enviada(cursor, link):
+            continue
+
+        achados += 1
+        pub = re.search(r'/(\d{2})-(\d{2})-(\d{4})_', link)
+        data_f = f"{pub.group(1)}/{pub.group(2)}/{pub.group(3)}" if pub else datetime.now().strftime("%d/%m/%Y")
+        nivel_match, techs = calcular_match(titulo)
+        techs_str = " · ".join(t.upper() for t in techs[:4]) if techs else "Verificar edital"
+
+        mensagem = (
+            f"🏥 <b>PREFEITURA DE BH · SAÚDE</b>\n\n"
+            f"💼 <b>Seleção:</b> {html_lib.escape(titulo)}\n"
+            f"📄 <b>Edital:</b> {html_lib.escape(edital)}\n"
+            f"📅 <b>Publicado em:</b> {data_f}\n"
+            f"⚠️ <i>O prazo de inscrição está no edital. Confira se a seleção aceita candidatos "
+            f"externos, pois seleções de Referência Técnica podem ser restritas a servidores.</i>\n"
+            f"📊 <b>Match:</b> {nivel_match} · <i>{techs_str}</i>\n\n"
+            f"🔗 <a href='{link}'>Abrir o edital (PDF)</a>"
+        )
+        registrar_e_enviar(conn, cursor, link, titulo, "Secretaria Municipal de Saúde (PBH)", data_f, mensagem, "PBH-SAUDE", nivel_match)
+
+    print(f"   📋 {total} seleções em andamento lidas, {achados} de Serviço Social novas.")
+
 # --- MAIN ---
 
 def main():
@@ -797,6 +960,13 @@ def main():
     buscar_vagas_linkedin(conn, cursor)
     buscar_vagas_inhire(conn, cursor)
     buscar_vagas_solides(conn, cursor)
+
+    if PBH_ATIVO:
+        for busca in (buscar_vagas_pbh_editais, buscar_vagas_pbh_saude):
+            try:
+                busca(conn, cursor)
+            except Exception as e:   # uma falha na PBH não pode derrubar as outras fontes
+                print(f"   ⚠️  Erro inesperado em {busca.__name__}: {e}")
 
     conn.close()
     print("\n✅ Varredura completa de todas as fontes!")
