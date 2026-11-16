@@ -16,7 +16,7 @@ except ImportError:
 
 # --- 1. CONFIG ---
 DIRETORIO_ATUAL = os.path.dirname(os.path.abspath(__file__))
-CAMINHO_BANCO   = os.path.join(DIRETORIO_ATUAL, 'vagas_gupy.db')
+CAMINHO_BANCO   = os.getenv("BANCO_VAGAS") or os.path.join(DIRETORIO_ATUAL, 'vagas_gupy.db')
 
 def carregar_env():
     caminho = os.path.join(DIRETORIO_ATUAL, '.env')
@@ -34,138 +34,127 @@ carregar_env()
 TOKEN   = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID_GRUPO")
 
+# Modo de teste: DRY_RUN=1 imprime os alertas no terminal em vez de enviar ao Telegram.
+# Use junto com BANCO_VAGAS=<arquivo temporário> para não alterar o banco real.
+DRY_RUN = os.getenv("DRY_RUN") == "1"
+
 # ════════════════════════════════════════════════════════════════════════════════
 # 2. CONFIGURAÇÕES DO USUÁRIO
 # Tudo que você precisa alterar para adaptar o bot ao seu perfil está aqui.
 # ════════════════════════════════════════════════════════════════════════════════
 
 # ──────────────────────────────────────────────────────────────────────────────
-# A. BUSCAS — o que procurar em cada plataforma
+# A. BUSCAS: o que procurar em cada plataforma (perfil: Assistente Social, BH)
 # ──────────────────────────────────────────────────────────────────────────────
 # "nome" é o label exibido no alerta do Telegram.
 
 # Gupy: busca por cargo (jobName) e modalidade (workplaceTypes).
 # workplaceTypes válidos: 'remote' | 'hybrid' | 'on-site'
 FILTROS_GUPY = [
-    {"nome": "FLUTTER · REMOTO", "params": {'workplaceTypes': 'remote', 'jobName': 'flutter', 'limit': 15}},
+    {"nome": "ASSISTENTE SOCIAL · PRESENCIAL", "params": {'workplaceTypes': 'on-site', 'jobName': 'assistente social', 'limit': 15}},
+    {"nome": "ASSISTENTE SOCIAL · HÍBRIDO",    "params": {'workplaceTypes': 'hybrid',  'jobName': 'assistente social', 'limit': 15}},
+    {"nome": "ANALISTA SOCIAL · PRESENCIAL",   "params": {'workplaceTypes': 'on-site', 'jobName': 'analista social', 'limit': 15}},
+    {"nome": "SERVIÇO SOCIAL · PRESENCIAL",    "params": {'workplaceTypes': 'on-site', 'jobName': 'serviço social', 'limit': 15}},
 ]
 
-# ProgramaThor: busca por termo + slug de localidade da URL.
-# local_filtro é o slug exato usado na URL do ProgramaThor:
-#   'remoto'     → /jobs-flutter/remoto
-#   'sao-paulo'  → /jobs-flutter/sao-paulo
-#   ''           → /jobs-flutter  (sem filtro de local)
-FILTROS_PROGRAMATHOR = [
-    {"nome": "FLUTTER · REMOTO", "termo": "flutter", "local_filtro": "remoto"},
-]
+# ProgramaThor é um site só de tecnologia: desativado.
+FILTROS_PROGRAMATHOR = []
 
-# LinkedIn (API guest): keywords + localização + filtros de data e modalidade.
-# f_WT=2 → remoto | f_TPR=r259200 → últimos 3 dias
-# Para outros países, altere o campo "location".
+# LinkedIn (API guest): keywords + localização + período.
+# Sem f_WT, para trazer presencial, híbrido e remoto.
+# f_TPR=r259200 → últimos 3 dias | r604800 → 7 dias
 FILTROS_LINKEDIN = [
-    {"nome": "FLUTTER · REMOTO", "params": {"keywords": "flutter", "location": "Brazil", "f_WT": "2", "f_TPR": "r259200", "start": 0}},
+    {"nome": "ASSISTENTE SOCIAL · BH", "params": {"keywords": "assistente social", "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r259200", "start": 0}},
+    {"nome": "ANALISTA SOCIAL · BH",   "params": {"keywords": "analista social",   "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r259200", "start": 0}},
+    {"nome": "SERVIÇO SOCIAL · BH",    "params": {"keywords": "serviço social",    "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r259200", "start": 0}},
 ]
 
-# Inhire: busca por termo no título + filtro de localização.
-# local_filtro válidos: 'remoto' | 'presencial'
-# Requer também EMPRESAS_INHIRE abaixo (lista de subdomínios monitorados).
+# Inhire: as empresas monitoradas eram de tecnologia. Desativado.
+# Para ativar, adicione subdomínios de organizações sociais em EMPRESAS_INHIRE.
 FILTROS_INHIRE = [
-    {"nome": "FLUTTER · REMOTO", "termo": "flutter", "local_filtro": "remoto"},
+    {"nome": "ASSISTENTE SOCIAL", "termo": "social", "local_filtro": "presencial"},
 ]
+EMPRESAS_INHIRE = []
 
-# Inhire — empresas monitoradas.
-# Adicione apenas o subdomínio: ex. "empresa" para empresa.inhire.app
-EMPRESAS_INHIRE = [
-    "reclameaqui",
-    "mottu",
-    "solutis",
-    "avenue",
-    "dtidigital",
-    "frameworkdigital",
-    "deal",
-    "aarin",
-    'kobe',
-    'peers',
-    'cubos',
-    'iconit',
-    'exa',
-    'programmers',
-    'growdev',
-    'aarin',
-    'wtime',
-    'kstack',
-    'premiersoft',
-    'pilar',
-    'ninecon',
-    'jump',
-    'via',
-    'contaazul',
-    'semantix',
-    'mazzatech',
-    'cappta',
-    'nstech'
-]
-
-# Solides: busca por título.
-# 'take' define quantas vagas por página (máx. recomendado: 14).
+# Solides: busca por título. 'take' define quantas vagas por página (máx. recomendado: 14).
 FILTROS_SOLIDES = [
-    {"nome": "FLUTTER · REMOTO", "params": {'title': 'flutter', 'take': 14}},
+    {"nome": "ASSISTENTE SOCIAL", "params": {'title': 'assistente social', 'take': 14}},
+    {"nome": "ANALISTA SOCIAL",   "params": {'title': 'analista social', 'take': 14}},
 ]
 
 # ──────────────────────────────────────────────────────────────────────────────
-# B. PERFIL — palavras-chave e empresas que bloqueiam a vaga
+# B. PERFIL: local, termos obrigatórios e bloqueios
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Período máximo de publicação aceito. Vagas mais antigas são ignoradas.
-# Dica: na primeira execução, aumente os valores para preencher o histórico
-# (ex: 30 dias), depois retorne ao padrão.
-DIAS_BUSCA_GUPY    = 10   # Gupy    → padrão: 10 dias
-DIAS_BUSCA_SOLIDES = 20  # Solides → padrão: 20 dias
+# Período máximo de publicação aceito. Na primeira execução, aumente
+# (ex: 30 dias) para preencher o histórico e depois volte ao padrão.
+DIAS_BUSCA_GUPY    = 15
+DIAS_BUSCA_SOLIDES = 20
+
+# Local: Gupy e Solides só enviam vagas dessas cidades (região metropolitana de BH).
+# Deixe a lista vazia para aceitar qualquer cidade. Sem acento e em minúsculas.
+CIDADES_PERMITIDAS = [
+    "belo horizonte", "contagem", "betim", "nova lima", "sabara", "santa luzia",
+    "ribeirao das neves", "vespasiano", "lagoa santa", "ibirite", "sarzedo",
+    "brumadinho", "esmeraldas", "pedro leopoldo", "mario campos", "sao jose da lapa",
+]
+ESTADOS_PERMITIDOS = ["minas gerais", "mg"]   # lista vazia = qualquer estado
+
+# O título da vaga precisa conter pelo menos um destes termos (evita
+# "assistente administrativo", que a busca da Gupy costuma trazer junto).
+TERMOS_OBRIGATORIOS = [
+    "social", "cras", "creas", "suas", "reassentamento", "habita",
+    "perit", "tts", "socioeduc", "socioambiental", "comunit",
+]
 
 # Qualquer termo abaixo encontrado no título da vaga a elimina da lista.
-# Use letras minúsculas — a busca é case-insensitive.
 GAPS_ELIMINATORIOS = [
-    "inglês avançado", "inglês fluente", "presencial", "php", "python",
-    "node.js", "node", "sqs", "rabbitmq", "product manager",
-    "product owner", "vue.js", "java", "vue js", "salesforce", "sales force", "react", "apex",
-    "kubernetes", "kafka", "dot net", ".net", "ruby", "go", "ruby on rails", "angular", "product designer",
-    "tester", "quality assurance", "analista de testes", "qa", "fullstack", "maker", "CRO", "ux designer","typescript", "adsales", "marketing",
-    "bi analyst", "offshore", "automation", "cobol", "mainframe", "head of sales", "ai developer", "editor de vídeo"
+    "estágio", "estagio", "estagiário", "estagiario", "jovem aprendiz", "aprendiz",
+    "técnico em enfermagem", "tecnico em enfermagem", "vendas", "telemarketing",
+    "motorista", "recepcionista", "marketing", "social media", "mídias sociais",
+    "midias sociais", "redes sociais", "social selling", "tráfego", "trafego",
 ]
 
-# Vagas dessas empresas são ignoradas em todas as fontes.
-# A comparação é parcial e case-insensitive: "hired" também bloqueia "Hired Feed".
+# Vagas dessas empresas são ignoradas em todas as fontes (busca parcial).
 EMPRESAS_IGNORADAS = [
-    "hired",
-    "Hired Feed",
-    "Hire Feed",
     "Jobgether",
-    "Quik Hire Staffing",
     # Adicione outras empresas que deseja ignorar aqui
 ]
 
 # ──────────────────────────────────────────────────────────────────────────────
-# C. MINHA STACK — tecnologias que você domina (usadas para calcular o match)
+# C. MINHA STACK: termos do perfil usados para calcular o match
 # ──────────────────────────────────────────────────────────────────────────────
-# Níveis de match (quantidade de itens encontrados no texto da vaga):
-#   🔴 Baixo  → 0 itens   |  🔵 Padrão → 1 item
-#   🟡 Médio  → 2 itens   |  🟢 Alto   → 3 ou mais
-#
-# Atenção: Gupy, LinkedIn e Inhire analisam apenas o título da vaga.
-# ProgramaThor usa título + tags; Solides usa título + descrição completa.
+# Níveis: 🔴 Baixo 0 | 🔵 Padrão 1 | 🟡 Médio 2 | 🟢 Alto 3 ou mais
+# Atenção: Gupy, LinkedIn e Inhire analisam apenas o título da vaga;
+# Solides usa título + descrição completa.
 MINHA_STACK = [
-    "flutter", "dart", "clean architecture", "bloc", "cubit", "provider", "riverpod",  "mobx",
-    "firebase", "crashlytics", "remote config", "firebase performance", "firebase authentication",
-    "onesignal", "cloud messaging", "api rest", "apis rest", "rest apis", "restful",  "dio", 
-    "flutter_test", "mocktail", "mockito", "tdd", "code coverage", "solid", "design patterns", 
-    "cross-platform", "cross platform", "android", "ios",
-    "codemagic", "github actions",  "fastlane", "gitflow",
-    "sqlite", "isar", "hive", "sharedpreferences", "fluttersecurestorage",
-    "tech lead", "agile", "scrum", "kanban",  "code review", "sênior", "pleno", "SN", "PL",
-    "devsecops", "micro front end", "testes de widget", "widget tests", "integration tests",
-    "offline first", "finops", "ci/cd", "mysql", "banco de dados", "figma", "flutter sdk", "solid", 
-    "modularização", "modular", "bloc_test", "clarity", "app store", "play store", "publicação", "push notifications"
+    "assistente social", "analista social", "serviço social", "servico social",
+    "habitação", "habitacao", "reassentamento", "trabalho técnico social",
+    "assistência social", "assistencia social", "suas", "cras", "creas", "scfv",
+    "convivência", "vínculos", "famílias", "familias", "vulnerabilidade",
+    "políticas públicas", "politicas publicas", "projetos sociais", "programas sociais",
+    "estudo social", "parecer", "laudo", "perícia", "pericia", "relatório técnico",
+    "gestão de projetos", "coordenador", "supervisor", "saúde", "saude",
+    "cress", "cadúnico", "cadunico", "escuta qualificada", "mediação de conflitos",
+    "responsabilidade social", "relacionamento comunitário", "socioeducativo",
 ]
+
+# ──────────────────────────────────────────────────────────────────────────────
+# D. UTILITÁRIOS DE LOCAL
+# ──────────────────────────────────────────────────────────────────────────────
+def _norm(s):
+    s = unicodedata.normalize('NFKD', str(s or '')).encode('ascii', 'ignore').decode('utf-8')
+    return s.strip().lower()
+
+def local_permitido(estado, cidade=""):
+    """True se o estado e a cidade estão nas listas permitidas (ou se a lista está vazia).
+    Campo vazio na fonte não bloqueia a vaga."""
+    e, c = _norm(estado), _norm(cidade)
+    if ESTADOS_PERMITIDOS and e and e not in ESTADOS_PERMITIDOS:
+        return False
+    if CIDADES_PERMITIDAS and c and c not in CIDADES_PERMITIDAS:
+        return False
+    return True
 
 # Set em memória para evitar duplicatas na mesma execução (mesma vaga, fontes/buscas diferentes)
 _enviados_sessao: set = set()
@@ -246,6 +235,9 @@ def ja_enviada(cursor, link):
     return cursor.fetchone() is not None
 
 def enviar_telegram(mensagem):
+    if DRY_RUN:
+        print("   [DRY_RUN] " + re.sub(r'<[^>]+>', '', mensagem).replace("\n\n", "\n"))
+        return
     payload = {
         "chat_id":                  CHAT_ID,
         "text":                     mensagem,
@@ -273,6 +265,8 @@ def registrar_e_enviar(conn, cursor, link, titulo, empresa, data_f, mensagem, fo
 
 def filtros_basicos(titulo, empresa=None):
     """Retorna (bloqueada, motivo) com os filtros de perfil."""
+    if TERMOS_OBRIGATORIOS and not any(t in titulo.lower() for t in TERMOS_OBRIGATORIOS):
+        return True, f"🚫 Fora do perfil: {titulo[:55]}"
     if tem_gap_eliminatorio(titulo):
         return True, f"🚫 Gap: {titulo[:55]}"
     if empresa:
@@ -328,6 +322,9 @@ def buscar_vagas_gupy(conn, cursor):
 
                     pais    = vaga.get('country', '')
                     if pais and pais.lower() not in ['brasil', 'brazil', 'br']:
+                        continue
+
+                    if not local_permitido(vaga.get('state'), vaga.get('city')):
                         continue
 
                     data_iso = vaga.get('publishedDate', '')
@@ -732,6 +729,8 @@ def buscar_vagas_solides(conn, cursor):
                     
                     cidade_info = vaga.get('city') or {}
                     estado_info = vaga.get('state') or {}
+                    if not local_permitido(estado_info.get('code') or estado_info.get('name'), cidade_info.get('name')):
+                        continue
                     local = f"{cidade_info.get('name', '')} - {estado_info.get('code', '')}".strip(" -")
                     if not local:
                         local = "Brasil"
@@ -760,7 +759,7 @@ def buscar_vagas_solides(conn, cursor):
 # --- MAIN ---
 
 def main():
-    if not TOKEN or not CHAT_ID:
+    if not DRY_RUN and (not TOKEN or not CHAT_ID):
         print("❌ ERRO: Token do Telegram ou Chat ID não encontrados no arquivo .env!")
         return
 
