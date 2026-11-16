@@ -68,8 +68,10 @@ FILTROS_PROGRAMATHOR = []
 # LinkedIn (API guest): keywords + localização + período.
 # Sem f_WT, para trazer presencial, híbrido e remoto.
 # f_TPR=r259200 → últimos 3 dias | r604800 → 7 dias
-# Para incluir outra cidade, basta acrescentar o nome em CIDADES_LINKEDIN.
-CIDADES_LINKEDIN = ["Belo Horizonte", "Contagem", "Betim"]
+# O LinkedIn agrupa a região metropolitana: buscar "Contagem" ou "Betim" devolve as mesmas
+# vagas de "Belo Horizonte" (testado em 16/11/2026), então uma cidade basta.
+# Para outra região (ex.: "Juiz de Fora"), acrescente o nome em CIDADES_LINKEDIN.
+CIDADES_LINKEDIN = ["Belo Horizonte"]
 TERMOS_LINKEDIN  = ["assistente social", "analista social", "serviço social"]
 # Termos extras (perícia, coordenação, reassentamento): só em BH, para limitar o número de buscas.
 TERMOS_LINKEDIN_EXTRA = ["reassentamento", "trabalho técnico social", "coordenador de projetos sociais", "perícia social"]
@@ -233,6 +235,7 @@ TRADUCAO_TIPO_VAGA = {
     "vacancy_type_internship":  "Estágio",
     "vacancy_type_temporary":   "Temporário",
     "vacancy_type_freelancer":  "Freelancer",
+    "vacancy_type_talent_pool": "Banco de Talentos (sem vaga específica)",
 }
 
 def iniciar_banco():
