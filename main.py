@@ -51,11 +51,15 @@ DRY_RUN = os.getenv("DRY_RUN") == "1"
 # Gupy (API atual do portal): busca por cargo (jobName) filtrando por estado (state).
 # A cidade é filtrada depois, por CIDADES_PERMITIDAS. 'limit' deve ficar em 10.
 # Para filtrar modalidade, acrescente 'workplaceType': 'on-site' | 'hybrid' | 'remote'.
+TERMOS_GUPY = [
+    "assistente social", "analista social", "serviço social", "responsabilidade social",
+    # perícia, coordenação e reassentamento
+    "perícia social", "perito", "coordenador social", "coordenador de projetos sociais",
+    "reassentamento", "trabalho técnico social", "técnico social",
+]
 FILTROS_GUPY = [
-    {"nome": "ASSISTENTE SOCIAL · MG",       "params": {'jobName': 'assistente social',       'state': 'Minas Gerais', 'limit': 10}},
-    {"nome": "ANALISTA SOCIAL · MG",         "params": {'jobName': 'analista social',         'state': 'Minas Gerais', 'limit': 10}},
-    {"nome": "SERVIÇO SOCIAL · MG",          "params": {'jobName': 'serviço social',          'state': 'Minas Gerais', 'limit': 10}},
-    {"nome": "RESPONSABILIDADE SOCIAL · MG", "params": {'jobName': 'responsabilidade social', 'state': 'Minas Gerais', 'limit': 10}},
+    {"nome": f"{termo.upper()} · MG", "params": {'jobName': termo, 'state': 'Minas Gerais', 'limit': 10}}
+    for termo in TERMOS_GUPY
 ]
 
 # ProgramaThor é um site só de tecnologia: desativado.
@@ -67,6 +71,8 @@ FILTROS_PROGRAMATHOR = []
 # Para incluir outra cidade, basta acrescentar o nome em CIDADES_LINKEDIN.
 CIDADES_LINKEDIN = ["Belo Horizonte", "Contagem", "Betim"]
 TERMOS_LINKEDIN  = ["assistente social", "analista social", "serviço social"]
+# Termos extras (perícia, coordenação, reassentamento): só em BH, para limitar o número de buscas.
+TERMOS_LINKEDIN_EXTRA = ["reassentamento", "trabalho técnico social", "coordenador de projetos sociais", "perícia social"]
 FILTROS_LINKEDIN = [
     {
         "nome": f"{termo.upper()} · {cidade.upper()}",
@@ -74,6 +80,12 @@ FILTROS_LINKEDIN = [
     }
     for cidade in CIDADES_LINKEDIN
     for termo in TERMOS_LINKEDIN
+] + [
+    {
+        "nome": f"{termo.upper()} · BELO HORIZONTE",
+        "params": {"keywords": f'"{termo}"', "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r604800", "start": 0},
+    }
+    for termo in TERMOS_LINKEDIN_EXTRA
 ]
 
 # Inhire: as empresas monitoradas eram de tecnologia. Desativado.
