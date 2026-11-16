@@ -48,13 +48,14 @@ DRY_RUN = os.getenv("DRY_RUN") == "1"
 # ──────────────────────────────────────────────────────────────────────────────
 # "nome" é o label exibido no alerta do Telegram.
 
-# Gupy: busca por cargo (jobName) e modalidade (workplaceTypes).
-# workplaceTypes válidos: 'remote' | 'hybrid' | 'on-site'
+# Gupy (API atual do portal): busca por cargo (jobName) filtrando por estado (state).
+# A cidade é filtrada depois, por CIDADES_PERMITIDAS. 'limit' deve ficar em 10.
+# Para filtrar modalidade, acrescente 'workplaceType': 'on-site' | 'hybrid' | 'remote'.
 FILTROS_GUPY = [
-    {"nome": "ASSISTENTE SOCIAL · PRESENCIAL", "params": {'workplaceTypes': 'on-site', 'jobName': 'assistente social', 'limit': 15}},
-    {"nome": "ASSISTENTE SOCIAL · HÍBRIDO",    "params": {'workplaceTypes': 'hybrid',  'jobName': 'assistente social', 'limit': 15}},
-    {"nome": "ANALISTA SOCIAL · PRESENCIAL",   "params": {'workplaceTypes': 'on-site', 'jobName': 'analista social', 'limit': 15}},
-    {"nome": "SERVIÇO SOCIAL · PRESENCIAL",    "params": {'workplaceTypes': 'on-site', 'jobName': 'serviço social', 'limit': 15}},
+    {"nome": "ASSISTENTE SOCIAL · MG",       "params": {'jobName': 'assistente social',       'state': 'Minas Gerais', 'limit': 10}},
+    {"nome": "ANALISTA SOCIAL · MG",         "params": {'jobName': 'analista social',         'state': 'Minas Gerais', 'limit': 10}},
+    {"nome": "SERVIÇO SOCIAL · MG",          "params": {'jobName': 'serviço social',          'state': 'Minas Gerais', 'limit': 10}},
+    {"nome": "RESPONSABILIDADE SOCIAL · MG", "params": {'jobName': 'responsabilidade social', 'state': 'Minas Gerais', 'limit': 10}},
 ]
 
 # ProgramaThor é um site só de tecnologia: desativado.
@@ -64,9 +65,9 @@ FILTROS_PROGRAMATHOR = []
 # Sem f_WT, para trazer presencial, híbrido e remoto.
 # f_TPR=r259200 → últimos 3 dias | r604800 → 7 dias
 FILTROS_LINKEDIN = [
-    {"nome": "ASSISTENTE SOCIAL · BH", "params": {"keywords": "assistente social", "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r259200", "start": 0}},
-    {"nome": "ANALISTA SOCIAL · BH",   "params": {"keywords": "analista social",   "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r259200", "start": 0}},
-    {"nome": "SERVIÇO SOCIAL · BH",    "params": {"keywords": "serviço social",    "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r259200", "start": 0}},
+    {"nome": "ASSISTENTE SOCIAL · BH", "params": {"keywords": '"assistente social"', "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r604800", "start": 0}},
+    {"nome": "ANALISTA SOCIAL · BH",   "params": {"keywords": '"analista social"',   "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r604800", "start": 0}},
+    {"nome": "SERVIÇO SOCIAL · BH",    "params": {"keywords": '"serviço social"',    "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r604800", "start": 0}},
 ]
 
 # Inhire: as empresas monitoradas eram de tecnologia. Desativado.
@@ -76,11 +77,9 @@ FILTROS_INHIRE = [
 ]
 EMPRESAS_INHIRE = []
 
-# Solides: busca por título. 'take' define quantas vagas por página (máx. recomendado: 14).
-FILTROS_SOLIDES = [
-    {"nome": "ASSISTENTE SOCIAL", "params": {'title': 'assistente social', 'take': 14}},
-    {"nome": "ANALISTA SOCIAL",   "params": {'title': 'analista social', 'take': 14}},
-]
+# Solides: DESATIVADO. A API responde HTTP 403 a qualquer acesso automático (testado em 16/11/2026).
+# Para tentar de novo, use o formato: {"nome": "ASSISTENTE SOCIAL", "params": {'title': 'assistente social', 'take': 14}}
+FILTROS_SOLIDES = []
 
 # ──────────────────────────────────────────────────────────────────────────────
 # B. PERFIL: local, termos obrigatórios e bloqueios
@@ -88,7 +87,7 @@ FILTROS_SOLIDES = [
 
 # Período máximo de publicação aceito. Na primeira execução, aumente
 # (ex: 30 dias) para preencher o histórico e depois volte ao padrão.
-DIAS_BUSCA_GUPY    = 15
+DIAS_BUSCA_GUPY    = 60   # a Gupy só lista vagas abertas; 60 dias traz as já publicadas na 1ª execução
 DIAS_BUSCA_SOLIDES = 20
 
 # Local: Gupy e Solides só enviam vagas dessas cidades (região metropolitana de BH).
@@ -104,7 +103,7 @@ ESTADOS_PERMITIDOS = ["minas gerais", "mg"]   # lista vazia = qualquer estado
 # "assistente administrativo", que a busca da Gupy costuma trazer junto).
 TERMOS_OBRIGATORIOS = [
     "social", "cras", "creas", "suas", "reassentamento", "habita",
-    "perit", "tts", "socioeduc", "socioambiental", "comunit",
+    "perit", "tts", "socioeduc", "socioambiental", "comunit", "terceiro setor",
 ]
 
 # Qualquer termo abaixo encontrado no título da vaga a elimina da lista.
@@ -286,7 +285,7 @@ def buscar_vagas_gupy(conn, cursor):
         'Accept':     'application/json, text/plain, */*',
         'Origin':     'https://portal.gupy.io',
     }
-    url_api = "https://employability-portal.gupy.io/api/v1/jobs"
+    url_api = "https://portal.gupy.io/api/job-search/jobs"
 
     for filtro in FILTROS_GUPY:
         print(f"\n   🔎 {filtro['nome']}...")
@@ -314,7 +313,10 @@ def buscar_vagas_gupy(conn, cursor):
                         continue
 
                     titulo  = vaga.get('name', 'Título Indisponível')
-                    empresa = vaga.get('careerPageName', 'Empresa não informada')
+                    empresa = vaga.get('careerPageName') or 'Empresa não informada'
+                    if _norm(empresa) in ('pagina de carreira', 'carreira', 'carreiras', 'vagas'):
+                        sub = re.match(r'https?://([^.]+)\.gupy\.io', link)
+                        empresa = sub.group(1).capitalize() if sub else empresa
                     local   = "Qualquer lugar (Remoto)" if 'REMOTO' in filtro['nome'] else f"{vaga.get('city', 'Não informado')} - {vaga.get('state', 'Não informado')}"
                     modelo  = TRADUCAO_MODELO.get(vaga.get('workplaceType', ''), "Não informado")
                     tipo    = TRADUCAO_TIPO_VAGA.get(vaga.get('type', ''), "Outros")
