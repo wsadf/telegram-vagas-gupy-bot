@@ -64,10 +64,16 @@ FILTROS_PROGRAMATHOR = []
 # LinkedIn (API guest): keywords + localização + período.
 # Sem f_WT, para trazer presencial, híbrido e remoto.
 # f_TPR=r259200 → últimos 3 dias | r604800 → 7 dias
+# Para incluir outra cidade, basta acrescentar o nome em CIDADES_LINKEDIN.
+CIDADES_LINKEDIN = ["Belo Horizonte", "Contagem", "Betim"]
+TERMOS_LINKEDIN  = ["assistente social", "analista social", "serviço social"]
 FILTROS_LINKEDIN = [
-    {"nome": "ASSISTENTE SOCIAL · BH", "params": {"keywords": '"assistente social"', "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r604800", "start": 0}},
-    {"nome": "ANALISTA SOCIAL · BH",   "params": {"keywords": '"analista social"',   "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r604800", "start": 0}},
-    {"nome": "SERVIÇO SOCIAL · BH",    "params": {"keywords": '"serviço social"',    "location": "Belo Horizonte, Minas Gerais, Brasil", "f_TPR": "r604800", "start": 0}},
+    {
+        "nome": f"{termo.upper()} · {cidade.upper()}",
+        "params": {"keywords": f'"{termo}"', "location": f"{cidade}, Minas Gerais, Brasil", "f_TPR": "r604800", "start": 0},
+    }
+    for cidade in CIDADES_LINKEDIN
+    for termo in TERMOS_LINKEDIN
 ]
 
 # Inhire: as empresas monitoradas eram de tecnologia. Desativado.
