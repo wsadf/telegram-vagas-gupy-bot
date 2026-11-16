@@ -244,18 +244,21 @@ def enviar_telegram(mensagem):
     if DRY_RUN:
         print("   [DRY_RUN] " + re.sub(r'<[^>]+>', '', mensagem).replace("\n\n", "\n"))
         return
-    payload = {
-        "chat_id":                  CHAT_ID,
-        "text":                     mensagem,
-        "parse_mode":               "HTML",
-        "disable_web_page_preview": True,
-    }
-    try:
-        r = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json=payload, timeout=10)
-        if r.status_code != 200:
-            print(f"⚠️  Telegram recusou: {r.text}")
-    except Exception as e:
-        print(f"❌ Erro Telegram: {e}")
+    # CHAT_ID_GRUPO aceita vários destinos separados por vírgula (ex.: "123456789,-1001234567890").
+    # Cada destino recebe a mensagem; a falha em um não impede o envio aos outros.
+    for chat_id in [c.strip() for c in (CHAT_ID or "").split(",") if c.strip()]:
+        payload = {
+            "chat_id":                  chat_id,
+            "text":                     mensagem,
+            "parse_mode":               "HTML",
+            "disable_web_page_preview": True,
+        }
+        try:
+            r = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json=payload, timeout=10)
+            if r.status_code != 200:
+                print(f"⚠️  Telegram recusou (chat {chat_id}): {r.text}")
+        except Exception as e:
+            print(f"❌ Erro Telegram (chat {chat_id}): {e}")
 
 def registrar_e_enviar(conn, cursor, link, titulo, empresa, data_f, mensagem, fonte, nivel_match):
     chave = _chave_sessao(titulo, empresa)
