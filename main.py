@@ -87,7 +87,7 @@ FILTROS_SOLIDES = []
 
 # Período máximo de publicação aceito. Na primeira execução, aumente
 # (ex: 30 dias) para preencher o histórico e depois volte ao padrão.
-DIAS_BUSCA_GUPY    = 60   # a Gupy só lista vagas abertas; 60 dias traz as já publicadas na 1ª execução
+DIAS_BUSCA_GUPY    = 120  # a Gupy só lista vagas abertas; 120 dias traz as já publicadas na 1ª execução
 DIAS_BUSCA_SOLIDES = 20
 
 # Local: Gupy e Solides só enviam vagas dessas cidades (região metropolitana de BH).
@@ -112,6 +112,7 @@ GAPS_ELIMINATORIOS = [
     "técnico em enfermagem", "tecnico em enfermagem", "vendas", "telemarketing",
     "motorista", "recepcionista", "marketing", "social media", "mídias sociais",
     "midias sociais", "redes sociais", "social selling", "tráfego", "trafego",
+    "voluntári", "voluntari",
 ]
 
 # Vagas dessas empresas são ignoradas em todas as fontes (busca parcial).
