@@ -58,10 +58,21 @@ TERMOS_GUPY = [
     "perícia social", "perito", "coordenador social", "coordenador de projetos sociais",
     "reassentamento", "trabalho técnico social", "técnico social",
 ]
+# Presencial e híbrido: Minas Gerais (sem filtro de modalidade, então vem tudo que está em MG).
 FILTROS_GUPY = [
     {"nome": f"{termo.upper()} · MG", "params": {'jobName': termo, 'state': 'Minas Gerais', 'limit': 10}}
     for termo in TERMOS_GUPY
 ]
+
+# Remoto: vagas de qualquer estado do Brasil (o filtro de cidade e estado não vale para elas).
+# Desligue com ACEITAR_REMOTO = False para receber só vagas da região.
+ACEITAR_REMOTO = True
+TERMOS_GUPY_REMOTO = ["assistente social", "analista social", "serviço social", "responsabilidade social"]
+if ACEITAR_REMOTO:
+    FILTROS_GUPY += [
+        {"nome": f"{termo.upper()} · REMOTO", "params": {'jobName': termo, 'workplaceType': 'remote', 'limit': 10}}
+        for termo in TERMOS_GUPY_REMOTO
+    ]
 
 # ProgramaThor é um site só de tecnologia: desativado.
 FILTROS_PROGRAMATHOR = []
@@ -352,7 +363,8 @@ def buscar_vagas_gupy(conn, cursor):
                     if pais and pais.lower() not in ['brasil', 'brazil', 'br']:
                         continue
 
-                    if not local_permitido(vaga.get('state'), vaga.get('city')):
+                    # Vaga remota vale de qualquer cidade; as demais respeitam as cidades permitidas.
+                    if vaga.get('workplaceType') != 'remote' and not local_permitido(vaga.get('state'), vaga.get('city')):
                         continue
 
                     data_iso = vaga.get('publishedDate', '')
