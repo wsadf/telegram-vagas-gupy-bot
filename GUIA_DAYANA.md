@@ -7,7 +7,9 @@ Ele busca vagas de Assistente Social e Analista Social e avisa no Telegram.
 - Buscas: "assistente social", "analista social" e "serviço social" na Gupy, LinkedIn (Belo Horizonte) e Solides.
 - Local: Gupy e Solides só enviam vagas de Minas Gerais e da região metropolitana de BH (lista `CIDADES_PERMITIDAS` no `main.py`).
 - Título: só passam títulos com "social", "CRAS", "CREAS", "SUAS", "reassentamento", "habitação", "perícia" e termos parecidos. Isso tira vagas como "assistente administrativo".
-- Bloqueios: estágio, aprendiz, vendas, marketing, "social media", "redes sociais" e similares.
+- Bloqueios: estágio, aprendiz, vendas, marketing, "social media", "redes sociais", cuidador(a) e **nível júnior** (júnior, junior, Jr, trainee), já que ela tem mais de 14 anos de experiência. Títulos Pleno e Sênior passam.
+- Termos aceitos no título: além de "social", também "políticas públicas", "referência técnica" e "comunidade". A lista fica em `TERMOS_OBRIGATORIOS`.
+- LinkedIn: busca até 3 páginas por termo (`LINKEDIN_PAGINAS`), mas só avança para a página seguinte quando a atual ainda tem títulos relevantes.
 - Match: o nível (Alto, Médio, Padrão, Baixo) usa termos do perfil dela, como habitação, reassentamento, SUAS e perícia.
 - ProgramaThor e InHire foram desativados, porque só têm vagas de tecnologia.
 - Banco `vagas_gupy.db` do projeto original foi apagado. Será criado vazio na primeira execução.

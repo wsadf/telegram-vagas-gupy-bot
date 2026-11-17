@@ -59,6 +59,9 @@ TERMOS_GUPY = [
     # perícia, coordenação e reassentamento
     "perícia social", "perito", "coordenador social", "coordenador de projetos sociais",
     "reassentamento", "trabalho técnico social", "técnico social",
+    # outros cargos do perfil (hoje sem vagas na Gupy, mas ficam monitorados)
+    "educador social", "orientador social", "psicossocial", "políticas públicas",
+    "assistência social", "habitação", "gestão social", "desenvolvimento social", "técnico de referência",
 ]
 # Presencial e híbrido: Minas Gerais (sem filtro de modalidade, então vem tudo que está em MG).
 FILTROS_GUPY = [
@@ -88,7 +91,8 @@ FILTROS_PROGRAMATHOR = []
 CIDADES_LINKEDIN = ["Belo Horizonte"]
 TERMOS_LINKEDIN  = ["assistente social", "analista social", "serviço social"]
 # Termos extras (perícia, coordenação, reassentamento): só em BH, para limitar o número de buscas.
-TERMOS_LINKEDIN_EXTRA = ["reassentamento", "trabalho técnico social", "coordenador de projetos sociais", "perícia social"]
+TERMOS_LINKEDIN_EXTRA = ["reassentamento", "trabalho técnico social", "coordenador de projetos sociais", "perícia social",
+                         "responsabilidade social", "analista de políticas públicas"]
 FILTROS_LINKEDIN = [
     {
         "nome": f"{termo.upper()} · {cidade.upper()}",
@@ -138,6 +142,9 @@ ESTADOS_PERMITIDOS = ["minas gerais", "mg"]   # lista vazia = qualquer estado
 TERMOS_OBRIGATORIOS = [
     "social", "cras", "creas", "suas", "reassentamento", "habita",
     "perit", "tts", "socioeduc", "socioambiental", "comunit", "terceiro setor",
+    # cargos do perfil que não trazem a palavra "social" no título
+    "políticas públicas", "politicas publicas", "referência técnica", "referencia tecnica",
+    "técnico de referência", "tecnico de referencia", "comunidade",
 ]
 
 # Qualquer termo abaixo encontrado no título da vaga a elimina da lista.
@@ -148,6 +155,11 @@ GAPS_ELIMINATORIOS = [
     "midias sociais", "redes sociais", "social selling", "tráfego", "trafego",
     "voluntári", "voluntari",
     "social midia", "social mídia", "mídia social", "midia social", "mídias", "midias",
+    "cuidador", "cuidadora",
+    # nível júnior: ela tem mais de 14 anos de experiência
+    "júnior", "junior", "jr", "trainee",
+    # falsos positivos de marketing e comunicação
+    "strategist", "community manager", "growth", "performance",
 ]
 
 # Vagas dessas empresas são ignoradas em todas as fontes (busca parcial).
@@ -551,6 +563,66 @@ def buscar_vagas_programathor(conn, cursor):
 
 # --- 6. LINKEDIN ---
 
+LINKEDIN_PAGINAS = 3    # no máximo 3 páginas por busca
+LINKEDIN_PASSO   = 10   # a busca pública devolve 10 vagas por página
+
+def _linkedin_processar(conn, cursor, filtro, cards, vistos):
+    """Filtra e envia as vagas de uma página de resultados.
+    Retorna quantas tinham título relevante (decide se vale buscar a página seguinte)."""
+    relevantes = 0
+    for card in cards:
+        try:
+            titulo_el  = card.find(class_=lambda c: c and 'title' in c)
+            empresa_el = card.find(class_=lambda c: c and 'subtitle' in c)
+            link_el    = card.find('a', href=True)
+            data_el    = card.find('time')
+
+            titulo  = titulo_el.get_text(strip=True)  if titulo_el  else "Título Indisponível"
+            empresa = empresa_el.get_text(strip=True) if empresa_el else "Empresa não informada"
+            link    = link_el['href'].split('?')[0]   if link_el    else ''
+            if not link:
+                continue
+
+            # Relevante = tem um termo do perfil e não cai nos bloqueios (estágio, social media etc.).
+            if (not TERMOS_OBRIGATORIOS or any(t in titulo.lower() for t in TERMOS_OBRIGATORIOS)) \
+                    and not tem_gap_eliminatorio(titulo):
+                relevantes += 1
+
+            if link in vistos:   # a mesma vaga aparece em buscas de termos diferentes
+                continue
+            vistos.add(link)
+
+            try:
+                data_iso = data_el.get('datetime', '') if data_el else ''
+                data_pub = datetime.strptime(data_iso, "%Y-%m-%d")
+                data_f   = data_pub.strftime("%d/%m/%Y")
+            except Exception:
+                data_f = "Sem data"
+
+            bloqueada, motivo = filtros_basicos(titulo, empresa)
+            if bloqueada:
+                print(f"   {motivo}")
+                continue
+
+            if ja_enviada(cursor, link):
+                continue
+
+            nivel_match, techs = calcular_match(titulo)
+            techs_str = " · ".join(t.upper() for t in techs[:4]) if techs else "Verificar descrição"
+
+            mensagem = (
+                f"🔷 <b>LINKEDIN — {html_lib.escape(filtro['nome'])}</b>\n\n"
+                f"💼 <b>Vaga:</b> {html_lib.escape(titulo)}\n"
+                f"🏢 <b>Empresa:</b> {html_lib.escape(empresa)}\n"
+                f"📅 <b>Data:</b> {data_f}\n"
+                f"📊 <b>Match:</b> {nivel_match} · <i>{techs_str}</i>\n\n"
+                f"🔗 <a href='{link}'>Aplicar no LinkedIn</a>"
+            )
+            registrar_e_enviar(conn, cursor, link, titulo, empresa, data_f, mensagem, "LINKEDIN", nivel_match)
+        except Exception as e:   # uma vaga com HTML estranho não pode derrubar a busca
+            print(f"   ⚠️  Erro ao ler uma vaga: {e}")
+    return relevantes
+
 def buscar_vagas_linkedin(conn, cursor):
     if not BS4_DISPONIVEL:
         print("\n⚠️  LinkedIn desativado: instale beautifulsoup4")
@@ -562,66 +634,46 @@ def buscar_vagas_linkedin(conn, cursor):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     }
     url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+    vistos = set()
+    limitado = False
 
     for filtro in FILTROS_LINKEDIN:
+        if limitado:
+            break
         print(f"\n   🔎 {filtro['nome']}...")
-        try:
-            resp = requests.get(url, params=filtro["params"], headers=headers, timeout=15)
+
+        for pagina_n in range(LINKEDIN_PAGINAS):
+            params = dict(filtro["params"])
+            params["start"] = pagina_n * LINKEDIN_PASSO
+            if pagina_n > 0:
+                time.sleep(1)   # pausa entre páginas, para não ser limitado
+
+            try:
+                resp = requests.get(url, params=params, headers=headers, timeout=15)
+            except Exception as e:
+                print(f"   ⚠️  Erro: {e}")
+                break
+
+            if resp.status_code == 429:
+                print("   🛑 O LinkedIn limitou os acessos (HTTP 429). Encerrando as buscas desta execução.")
+                limitado = True
+                break
             if resp.status_code != 200:
                 print(f"   🛑 HTTP {resp.status_code}")
-                continue
+                break
 
-            soup  = BeautifulSoup(resp.text, 'html.parser')
-            cards = soup.find_all('div', class_='base-card')
-
+            cards = BeautifulSoup(resp.text, 'html.parser').find_all('div', class_='base-card')
             if not cards:
                 print("   🔚 Nenhuma vaga ou resposta bloqueada.")
-                continue
+                break
 
-            for card in cards:
-                titulo_el  = card.find(class_=lambda c: c and 'title' in c)
-                empresa_el = card.find(class_=lambda c: c and 'subtitle' in c)
-                link_el    = card.find('a', href=True)
-                data_el    = card.find('time')
+            relevantes = _linkedin_processar(conn, cursor, filtro, cards, vistos)
 
-                titulo  = titulo_el.get_text(strip=True)  if titulo_el  else "Título Indisponível"
-                empresa = empresa_el.get_text(strip=True) if empresa_el else "Empresa não informada"
-                link    = link_el['href'].split('?')[0]   if link_el    else ''
-
-                if not link:
-                    continue
-
-                try:
-                    data_iso = data_el.get('datetime', '') if data_el else ''
-                    data_pub = datetime.strptime(data_iso, "%Y-%m-%d")
-                    data_f   = data_pub.strftime("%d/%m/%Y")
-                    hora_f   = "--:--"
-                except Exception:
-                    data_f, hora_f = "Sem data", "--:--"
-
-                bloqueada, motivo = filtros_basicos(titulo, empresa)
-                if bloqueada:
-                    print(f"   {motivo}")
-                    continue
-
-                if ja_enviada(cursor, link):
-                    continue
-
-                nivel_match, techs = calcular_match(titulo)
-                techs_str = " · ".join(t.upper() for t in techs[:4]) if techs else "Verificar descrição"
-
-                mensagem = (
-                    f"🔷 <b>LINKEDIN — {filtro['nome']}</b>\n\n"
-                    f"💼 <b>Vaga:</b> {titulo}\n"
-                    f"🏢 <b>Empresa:</b> {empresa}\n"
-                    f"📅 <b>Data:</b> {data_f}\n"
-                    f"📊 <b>Match:</b> {nivel_match} · <i>{techs_str}</i>\n\n"
-                    f"🔗 <a href='{link}'>Aplicar no LinkedIn</a>"
-                )
-                registrar_e_enviar(conn, cursor, link, titulo, empresa, data_f, mensagem, "LINKEDIN", nivel_match)
-
-        except Exception as e:
-            print(f"   ⚠️  Erro: {e}")
+            # A relevância cai rápido: só vale a página seguinte se esta ainda trouxe títulos relevantes.
+            if relevantes == 0:
+                break
+            if pagina_n + 1 < LINKEDIN_PAGINAS:
+                print(f"   ➡️  {relevantes} título(s) relevante(s) na página {pagina_n + 1}; buscando a página {pagina_n + 2}...")
 
 # --- 7. INHIRE ---
 
