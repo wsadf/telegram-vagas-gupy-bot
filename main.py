@@ -958,6 +958,121 @@ def buscar_vagas_pbh_saude(conn, cursor):
 
     print(f"   📋 {total} seleções em andamento lidas, {achados} de Serviço Social novas.")
 
+# --- 10. INSTITUTO ELO ---
+
+ELO_URL   = "https://www.parceriaspublicas.institutoelo.org.br/trabalhe-conosco"
+ELO_ATIVO = True   # False desliga a busca do Instituto Elo
+
+# O edital só interessa se a FORMAÇÃO exigida aceitar Serviço Social
+# (ou, na falta da formação, se o cargo for de Assistente Social).
+ELO_SERVICO_SOCIAL = re.compile(r"assistente social|servi[cç]o social", re.I)
+
+def _elo_texto(trecho):
+    trecho = re.sub(r'(?is)<(script|style).*?</\1>', ' ', trecho)
+    trecho = re.sub(r'(?i)<br\s*/?>', ' | ', trecho)
+    trecho = re.sub(r'<[^>]+>', ' ', trecho)
+    trecho = html_lib.unescape(trecho).replace('\xa0', ' ')
+    return re.sub(r'\s+', ' ', trecho).strip()
+
+def _elo_campo(texto, nome, ate):
+    """Extrai 'Nome: valor' até o próximo rótulo."""
+    m = re.search(nome + r':\s*(.*?)\s*(?:' + ate + r'|$)', texto, re.I)
+    return m.group(1).strip(' |') if m else ''
+
+def buscar_vagas_elo(conn, cursor):
+    """Instituto Elo (processos seletivos de socioeducativo e prevenção em Minas Gerais).
+    Lê a seção 'em andamento' e avisa os editais cuja formação aceita Serviço Social,
+    em cidades permitidas e com a inscrição ainda aberta."""
+    print("\n🟠 INSTITUTO ELO — iniciando varredura...")
+    try:
+        resp = requests.get(ELO_URL, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept-Language': 'pt-BR,pt;q=0.9',
+        }, timeout=90)
+        resp.raise_for_status()
+        resp.encoding = 'cp1252'   # a página declara ISO-8859-1, mas usa acentos do Windows-1252
+        pagina = resp.text
+    except Exception as e:
+        print(f"   ⚠️  Erro ao abrir a página: {e}")
+        return
+
+    blocos = pagina.split('<div class="bloco-info-edital">')[1:]
+    if not blocos:
+        print("   🔚 Nenhum edital encontrado (a página pode ter mudado).")
+        return
+
+    hoje = datetime.now().date()
+    em_andamento = enviadas = 0
+
+    for bloco in blocos:
+        cat = re.search(r'categoria-editais">([^<]+)<', bloco)
+        if not cat or 'andamento' not in cat.group(1).lower():
+            continue
+        em_andamento += 1
+
+        tit = re.search(r'<h3[^>]*>([^<]+)<', bloco)
+        titulo = html_lib.unescape(tit.group(1)).strip() if tit else "Edital Instituto Elo"
+        corpo = bloco.split('</h3>', 1)[1] if '</h3>' in bloco else bloco
+        texto = _elo_texto(corpo).split('Processos seletivos')[0]
+
+        cargo     = _elo_campo(texto, 'Cargo', r'Forma[cç][aã]o|Munic[ií]pio|Per[ií]odo')
+        formacao  = _elo_campo(texto, 'Forma[cç][aã]o', r'Munic[ií]pio|Per[ií]odo|Fa[cç]a aqui')
+        municipio = _elo_campo(texto, 'Munic[ií]pio', r'Per[ií]odo|Fa[cç]a aqui|Edital')
+
+        # 1) formação precisa aceitar Serviço Social
+        if not ELO_SERVICO_SOCIAL.search(formacao or cargo):
+            continue
+
+        # 2) inscrição ainda aberta (sem data legível, avisa mesmo assim)
+        per = re.search(r'Per[ií]odo de inscri[cç][aã]o:?\s*(.{0,60})', texto, re.I)
+        datas = re.findall(r'\d{2}/\d{2}/\d{4}', per.group(1)) if per else []
+        fim = None
+        if datas:
+            try:
+                fim = datetime.strptime(datas[-1], "%d/%m/%Y")
+            except ValueError:
+                fim = None
+        if fim and fim.date() < hoje:
+            continue
+
+        # 3) cidade permitida
+        if CIDADES_PERMITIDAS and municipio and not any(c in _norm(municipio) for c in CIDADES_PERMITIDAS):
+            continue
+
+        # links: inscrição e edital
+        link_insc = link_edital = ""
+        for href, rotulo in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', bloco, re.S):
+            r = _elo_texto(rotulo).lower()
+            if not link_insc and 'inscri' in r:
+                link_insc = href
+            elif not link_edital and r.startswith('edital'):
+                link_edital = href
+        link = link_insc or link_edital
+        if not link or ja_enviada(cursor, link):
+            continue
+
+        enviadas += 1
+        data_f = fim.strftime("%d/%m/%Y") if fim else "ver edital"
+        nivel_match, techs = calcular_match(f"{titulo} {cargo} {formacao}")
+        techs_str = " · ".join(t.upper() for t in techs[:4]) if techs else "Verificar edital"
+        links_html = f"🔗 <a href='{link_insc}'>Fazer a inscrição</a>" if link_insc else ""
+        if link_edital:
+            links_html += ("\n" if links_html else "") + f"📄 <a href='{link_edital}'>Abrir o edital (PDF)</a>"
+
+        mensagem = (
+            f"🟠 <b>INSTITUTO ELO</b>\n\n"
+            f"💼 <b>Edital:</b> {html_lib.escape(titulo)}\n"
+            f"👔 <b>Cargo:</b> {html_lib.escape(cargo or 'Não informado')}\n"
+            f"🎓 <b>Formação:</b> {html_lib.escape((formacao or 'Não informada')[:220])}\n"
+            f"📍 <b>Município:</b> {html_lib.escape(municipio or 'Não informado')}\n"
+            f"📅 <b>Inscrição até:</b> {data_f}\n"
+            f"📊 <b>Match:</b> {nivel_match} · <i>{techs_str}</i>\n\n"
+            f"{links_html}"
+        )
+        registrar_e_enviar(conn, cursor, link, titulo, cargo or titulo, data_f, mensagem, "ELO", nivel_match)
+
+    print(f"   📋 {em_andamento} processos em andamento lidos, {enviadas} de Serviço Social novos.")
+
 # --- MAIN ---
 
 def main():
@@ -973,12 +1088,17 @@ def main():
     buscar_vagas_inhire(conn, cursor)
     buscar_vagas_solides(conn, cursor)
 
+    # Fontes institucionais: uma falha em uma delas não pode derrubar as outras.
+    buscas_extras = []
     if PBH_ATIVO:
-        for busca in (buscar_vagas_pbh_editais, buscar_vagas_pbh_saude):
-            try:
-                busca(conn, cursor)
-            except Exception as e:   # uma falha na PBH não pode derrubar as outras fontes
-                print(f"   ⚠️  Erro inesperado em {busca.__name__}: {e}")
+        buscas_extras += [buscar_vagas_pbh_editais, buscar_vagas_pbh_saude]
+    if ELO_ATIVO:
+        buscas_extras.append(buscar_vagas_elo)
+    for busca in buscas_extras:
+        try:
+            busca(conn, cursor)
+        except Exception as e:
+            print(f"   ⚠️  Erro inesperado em {busca.__name__}: {e}")
 
     conn.close()
     print("\n✅ Varredura completa de todas as fontes!")

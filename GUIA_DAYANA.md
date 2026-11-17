@@ -21,9 +21,16 @@ O bot lê duas páginas da PBH:
 
 Para desligar, use `PBH_ATIVO = False` no `main.py`.
 
+## Instituto Elo (fonte nova)
+O bot lê a seção "Processos seletivos em andamento" do [Instituto Elo](https://www.parceriaspublicas.institutoelo.org.br/trabalhe-conosco) (unidades socioeducativas e programa de prevenção em Minas Gerais). Só avisa o edital quando:
+- a **formação exigida aceita Serviço Social** (não basta o cargo se chamar "Analista Social" ou "Analista Socioeducativo": muitos exigem Psicologia, Direito ou Terapia Ocupacional);
+- a inscrição ainda está aberta;
+- o município está na lista `CIDADES_PERMITIDAS`.
+
+O alerta traz o link de inscrição e o do edital. Para desligar, use `ELO_ATIVO = False` no `main.py`.
+
 ## O que o bot NÃO cobre
-Instituto Elo, Quatre, URBEL, concursos e tribunais não passam pelo bot. Continue conferindo:
-- https://www.parceriaspublicas.institutoelo.org.br/trabalhe-conosco
+Quatre, URBEL, concursos e tribunais não passam pelo bot. Continue conferindo:
 - https://quatre.com.br/oportunidades/assistente-social-bh/
 
 ## Passo a passo
