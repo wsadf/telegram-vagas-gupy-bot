@@ -1324,6 +1324,102 @@ def buscar_vagas_ses(conn, cursor):
         registrar_e_enviar(conn, cursor, chave, titulo, "SES-MG", datetime.now().strftime("%d/%m/%Y"), mensagem, "SES", nivel_match)
     print(f"   📋 {len(artigos)} itens lidos, {abertos} seleções simplificadas abertas novas.")
 
+# --- 14. CONCURSOS NO BRASIL (notícias de concursos e seletivos em MG) ---
+
+CNB_ATIVO = True
+CNB_API   = "https://concursosnobrasil.com/wp-json/wp/v2/posts"
+CNB_BUSCA = "assistente social minas gerais"
+CNB_DIAS  = 30   # só notícias dos últimos 30 dias
+# Órgãos estaduais (além das prefeituras das cidades permitidas, buscadas no título da notícia).
+CNB_ORGAOS_ESTADUAIS = re.compile(
+    r"governo de minas|tj ?mg|tribunal de justi[cç]a de minas|fhemig|\bses[- ]?mg\b|urbel|cohab|copasa|cemig|\bpbh\b|estado de minas", re.I)
+_MESES = {"janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4, "maio": 5, "junho": 6,
+          "julho": 7, "agosto": 8, "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12}
+
+def _cnb_datas(trecho, ano):
+    """Datas em '17/11/2026', '17/11' ou '17 de novembro de 2026' encontradas no trecho."""
+    achadas = []
+    padrao = (r'(\d{1,2})/(\d{1,2})(?:/(\d{4}))?|(\d{1,2}) de '
+              r'(janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)'
+              r'(?: de (\d{4}))?')
+    for m in re.finditer(padrao, trecho, re.I):
+        try:
+            if m.group(1):
+                d, mo, a = int(m.group(1)), int(m.group(2)), int(m.group(3) or ano)
+            else:
+                d, mo, a = int(m.group(4)), _MESES[m.group(5).lower()], int(m.group(6) or ano)
+            achadas.append(datetime(a, mo, d).date())
+        except (ValueError, KeyError):
+            continue
+    return achadas
+
+def _cnb_prazo(texto, ano):
+    """Última data citada logo após a palavra 'inscrições' (fim provável das inscrições), ou None."""
+    fins = []
+    for m in re.finditer(r'inscri[cç][oõ]es?', texto, re.I):
+        datas = _cnb_datas(texto[m.end(): m.end() + 170], ano)
+        if datas:
+            fins.append(datas[-1])
+    return max(fins) if fins else None
+
+def buscar_vagas_cnb(conn, cursor):
+    """Notícias de concursos e seletivos de Minas Gerais que citam 'assistente social' no texto,
+    em prefeituras das cidades permitidas e órgãos estaduais, com inscrição ainda aberta."""
+    print("\n📰 CONCURSOS NO BRASIL — iniciando varredura...")
+    try:
+        posts = json.loads(_pbh_get(CNB_API, {
+            "search": CNB_BUSCA, "per_page": 40, "orderby": "date", "order": "desc",
+            "_fields": "date,title,link,content"}))
+    except Exception as e:
+        print(f"   ⚠️  Erro ao consultar a API: {e}")
+        return
+    if not isinstance(posts, list) or not posts:
+        print("   🔚 Nenhuma notícia encontrada (a API pode ter mudado).")
+        return
+
+    hoje = datetime.now().date()
+    novos = 0
+    for post in posts:
+        try:
+            link = post["link"]
+            titulo = _limpa_html(post["title"]["rendered"])
+            texto = _limpa_html(post["content"]["rendered"])
+            pub = datetime.strptime(post["date"][:10], "%Y-%m-%d").date()
+        except (KeyError, ValueError, TypeError):
+            continue
+        if (hoje - pub).days > CNB_DIAS:
+            continue
+        achou = re.search(r'assistente social', texto, re.I)
+        if not achou:
+            continue
+        t_norm = _norm(titulo)
+        if not (any(c in t_norm for c in CIDADES_PERMITIDAS) or CNB_ORGAOS_ESTADUAIS.search(titulo)):
+            continue
+        prazo = _cnb_prazo(texto, pub.year)
+        if prazo and prazo < hoje:
+            continue
+        if ja_enviada(cursor, link):
+            continue
+
+        trecho = texto[max(0, achou.start() - 70): achou.end() + 110].strip()
+        nivel_match, techs = calcular_match(f"{titulo} assistente social")
+        techs_str = " · ".join(t.upper() for t in techs[:4]) if techs else "Verificar edital"
+        prazo_f = (f"{prazo.strftime('%d/%m/%Y')} <i>(conforme a notícia)</i>" if prazo
+                   else "<i>não informado, confira no edital</i>")
+        mensagem = (
+            f"📰 <b>CONCURSOS NO BRASIL · MG</b>\n\n"
+            f"🏛️ <b>Notícia:</b> {html_lib.escape(titulo)}\n"
+            f"📅 <b>Publicada em:</b> {pub.strftime('%d/%m/%Y')}\n"
+            f"🧾 <b>Trecho:</b> <i>...{html_lib.escape(trecho)}...</i>\n"
+            f"⏳ <b>Inscrições até:</b> {prazo_f}\n"
+            f"⚠️ <i>Informação de portal de notícias. Confirme cargo, vagas e prazo no edital.</i>\n"
+            f"📊 <b>Match:</b> {nivel_match} · <i>{techs_str}</i>\n\n"
+            f"🔗 <a href='{link}'>Ler a notícia e acessar o edital</a>"
+        )
+        registrar_e_enviar(conn, cursor, link, titulo, "Concursos no Brasil", pub.strftime("%d/%m/%Y"), mensagem, "CNB", nivel_match)
+        novos += 1
+    print(f"   📋 {len(posts)} notícias lidas, {novos} novas na região com Assistente Social.")
+
 # --- MAIN ---
 
 def main():
@@ -1351,6 +1447,8 @@ def main():
         buscas_extras.append(buscar_vagas_pci)
     if SES_ATIVO:
         buscas_extras.append(buscar_vagas_ses)
+    if CNB_ATIVO:
+        buscas_extras.append(buscar_vagas_cnb)
     for busca in buscas_extras:
         try:
             busca(conn, cursor)

@@ -34,6 +34,8 @@ O alerta traz o link de inscrição e o do edital. Para desligar, use `ELO_ATIVO
 - **PCI Concursos:** concursos públicos de Minas Gerais com vaga de Assistente Social, em prefeituras das cidades permitidas e órgãos estaduais. A data é o fim das inscrições, e concursos já encerrados são ignorados. Quando o cargo é "Vários Cargos", o alerta pede para confirmar no edital. Desligue com `PCI_ATIVO = False`.
 - **SES-MG:** avisa processos de **Seleção Simplificada** abertos (os de Seleção Interna são só para servidores). Desligue com `SES_ATIVO = False`.
 
+- **Concursos no Brasil:** lê a API pública de notícias do portal e avisa concursos e seletivos de MG que citam "assistente social" no texto, publicados nos últimos 30 dias (`CNB_DIAS`), em prefeituras das cidades permitidas e órgãos estaduais. Lê o prazo de inscrição na própria notícia e ignora os já encerrados. É informação de portal de notícias: o alerta pede para confirmar cargo, vagas e prazo no edital. Pode repetir um concurso que o PCI Concursos também avisou. Desligue com `CNB_ATIVO = False`.
+
 ## O que o bot NÃO cobre
 Quatre, URBEL, concursos e tribunais não passam pelo bot. Continue conferindo:
 - https://quatre.com.br/oportunidades/assistente-social-bh/
