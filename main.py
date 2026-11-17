@@ -6,6 +6,8 @@ import requests
 import unicodedata
 import xml.etree.ElementTree as ET
 import html as html_lib
+import json
+import urllib.parse
 from datetime import datetime, timedelta
 
 try:
@@ -268,7 +270,21 @@ def ja_enviada(cursor, link):
     cursor.execute('SELECT 1 FROM vagas_enviadas WHERE link = ?', (link,))
     return cursor.fetchone() is not None
 
+# Acrescenta ao fim de cada alerta um link "Compartilhar no WhatsApp": ao tocar, o WhatsApp abre
+# com o texto da vaga já preenchido, e a pessoa só escolhe o contato ou o grupo.
+COMPARTILHAR_WHATSAPP = True
+
+def _link_whatsapp(mensagem):
+    texto = html_lib.unescape(re.sub(r'<[^>]+>', '', mensagem)).strip()
+    texto = re.sub(r'\n{3,}', '\n\n', texto)[:900]
+    links = re.findall(r"href='([^']+)'", mensagem)
+    if links:
+        texto += "\n" + "\n".join(links[:2])
+    return "https://wa.me/?text=" + urllib.parse.quote(texto)
+
 def enviar_telegram(mensagem):
+    if COMPARTILHAR_WHATSAPP:
+        mensagem += f"\n\n📲 <a href='{_link_whatsapp(mensagem)}'>Compartilhar no WhatsApp</a>"
     if DRY_RUN:
         print("   [DRY_RUN] " + re.sub(r'<[^>]+>', '', mensagem).replace("\n\n", "\n"))
         return True
@@ -822,6 +838,8 @@ def _pbh_get(url, params=None):
     }
     resp = requests.get(url, params=params, headers=headers, timeout=30)
     resp.raise_for_status()
+    if 'charset' not in resp.headers.get('content-type', '').lower():
+        resp.encoding = 'utf-8'   # sem charset declarado, o requests assumiria ISO-8859-1 e quebraria os acentos
     return resp.text
 
 def _pbh_texto(pagina):
@@ -1082,6 +1100,230 @@ def buscar_vagas_elo(conn, cursor):
 
     print(f"   📋 {em_andamento} processos em andamento lidos, {enviadas} de Serviço Social novos.")
 
+# --- 11. TRABALHA BRASIL ---
+
+TB_ATIVO    = True   # False desliga esta fonte
+TB_BASE     = "https://www.trabalhabrasil.com.br"
+TB_CIDADES  = ["belo-horizonte-mg", "contagem-mg", "betim-mg"]
+TB_CARGOS   = ["assistente-social", "analista-social", "tecnico-social"]
+TB_PAGINAS  = 2      # páginas por busca (15 vagas por página)
+TB_DIAS_MAX = 120    # ignora vagas publicadas há mais dias que isso (o site mantém anúncios antigos)
+
+def _limpa_html(trecho, sep=' '):
+    trecho = re.sub(r'(?is)<(script|style|svg).*?</\1>', ' ', trecho)
+    trecho = re.sub(r'(?i)<br\s*/?>', sep, trecho)
+    trecho = re.sub(r'<[^>]+>', sep, trecho)
+    trecho = html_lib.unescape(trecho).replace('\xa0', ' ')
+    return re.sub(r'\s+', ' ', trecho).strip()
+
+def _tb_cartoes(pagina):
+    """Extrai (id, link, titulo, empresa, cidade, detalhes) de cada cartão da lista."""
+    saida = []
+    for jid, bloco in re.findall(r'<article class="job-card" data-job-id="(\d+)">(.*?)</article>', pagina, re.S):
+        href = re.search(r'href="([^"]+)"', bloco)
+        tit = re.search(r'<h2[^>]*>(.*?)</h2>', bloco, re.S)
+        emp = re.search(r'<p class="job-company">(.*?)</p>', bloco, re.S)
+        if not href or not tit:
+            continue
+        titulo = _limpa_html(tit.group(1))
+        empresa = _limpa_html(emp.group(1)) if emp else "Empresa não informada"
+        segmentos = [s.strip() for s in _limpa_html(bloco, sep=' | ').split('|') if s.strip()]
+        cidade = next((s for s in segmentos if re.match(r'^.+/[A-Z]{2}$', s)), "")
+        detalhes = [s for s in segmentos if s not in (titulo, empresa, cidade)]
+        saida.append((jid, TB_BASE + href.group(1), titulo, empresa, cidade, detalhes))
+    return saida
+
+def _tb_detalhe(link):
+    """Lê o JobPosting (JSON-LD) da página da vaga: data de publicação e descrição."""
+    pagina = _pbh_get(link)
+    for m in re.finditer(r'<script[^>]+application/ld\+json[^>]*>(.*?)</script>', pagina, re.S):
+        try:
+            dados = json.loads(m.group(1))
+        except ValueError:
+            continue
+        for item in (dados if isinstance(dados, list) else [dados]):
+            if isinstance(item, dict) and item.get('@type') == 'JobPosting':
+                return item
+    return None
+
+def buscar_vagas_trabalhabrasil(conn, cursor):
+    print("\n🟡 TRABALHA BRASIL — iniciando varredura...")
+    hoje = datetime.now().date()
+    vistos = set()
+    for cidade_slug in TB_CIDADES:
+        for cargo_slug in TB_CARGOS:
+            for pagina_n in range(1, TB_PAGINAS + 1):
+                url = f"{TB_BASE}/vagas-de-emprego-em-{cidade_slug}/{cargo_slug}"
+                try:
+                    pagina = _pbh_get(url, {"pagina": pagina_n} if pagina_n > 1 else None)
+                except Exception as e:
+                    print(f"   ⚠️  Erro em {cidade_slug}/{cargo_slug} p{pagina_n}: {e}")
+                    break
+                time.sleep(0.5)   # pausa entre as buscas
+                cartoes = _tb_cartoes(pagina)
+                if not cartoes:
+                    break
+                for jid, link, titulo, empresa, cidade, detalhes in cartoes:
+                    if link in vistos:
+                        continue
+                    vistos.add(link)
+                    bloqueada, motivo = filtros_basicos(titulo, empresa)
+                    if bloqueada:
+                        continue
+                    if cidade and not local_permitido("Minas Gerais" if cidade.endswith("/MG") else cidade[-2:], cidade.rsplit('/', 1)[0]):
+                        continue
+                    if ja_enviada(cursor, link):
+                        continue
+
+                    data_pub, descricao = None, ""
+                    try:
+                        item = _tb_detalhe(link)
+                        time.sleep(0.5)
+                        if item:
+                            try:
+                                data_pub = datetime.strptime(str(item.get('datePosted', ''))[:10], "%Y-%m-%d").date()
+                            except ValueError:
+                                data_pub = None
+                            descricao = _limpa_html(item.get('description', ''))[:260]
+                    except Exception as e:
+                        print(f"   ⚠️  Erro ao abrir a vaga {jid}: {e}")
+
+                    if data_pub and (hoje - data_pub).days > TB_DIAS_MAX:
+                        _pbh_marcar_visto(conn, cursor, link, data_pub.strftime("%d/%m/%Y"), f"[TB antiga] {titulo[:100]}")
+                        continue
+
+                    data_f = data_pub.strftime("%d/%m/%Y") if data_pub else "não informada"
+                    nivel_match, techs = calcular_match(f"{titulo} {descricao}")
+                    techs_str = " · ".join(t.upper() for t in techs[:4]) if techs else "Verificar descrição"
+                    extra = "\n".join(f"▫️ {html_lib.escape(d)}" for d in detalhes[:4])
+                    mensagem = (
+                        f"🟡 <b>TRABALHA BRASIL</b>\n\n"
+                        f"💼 <b>Vaga:</b> {html_lib.escape(titulo)}\n"
+                        f"🏢 <b>Empresa:</b> {html_lib.escape(empresa)}\n"
+                        f"📍 <b>Local:</b> {html_lib.escape(cidade or 'Não informado')}\n"
+                        + (extra + "\n" if extra else "")
+                        + f"📅 <b>Publicada em:</b> {data_f}\n"
+                        + (f"📝 <i>{html_lib.escape(descricao)}</i>\n" if descricao else "")
+                        + f"📊 <b>Match:</b> {nivel_match} · <i>{techs_str}</i>\n\n"
+                        f"🔗 <a href='{link}'>Ver a vaga</a>"
+                    )
+                    registrar_e_enviar(conn, cursor, link, titulo, empresa, data_f, mensagem, "TRABALHABRASIL", nivel_match)
+
+# --- 12. PCI CONCURSOS ---
+
+PCI_ATIVO = True
+PCI_URL   = "https://www.pciconcursos.com.br/vagas/assistente-social/"
+# Órgãos estaduais ou de abrangência na região, além das prefeituras das cidades permitidas.
+PCI_ORGAOS_REGIONAIS = re.compile(
+    r"minas gerais|governo de minas|\bmg\b|tribunal|tj ?mg|fhemig|\bses\b|fundep|urbel|cohab|copasa|cemig|\bpbh\b|belo horizonte", re.I)
+
+def _pci_orgao_regional(orgao):
+    m = re.match(r'(?i)(?:prefeitura|c[aâ]mara)(?: municipal)? de\s+(.+)', orgao)
+    if m:                                   # prefeitura/câmara: só as cidades permitidas
+        return _norm(m.group(1)) in CIDADES_PERMITIDAS if CIDADES_PERMITIDAS else True
+    if CIDADES_PERMITIDAS and any(c in _norm(orgao) for c in CIDADES_PERMITIDAS):
+        return True
+    return bool(PCI_ORGAOS_REGIONAIS.search(orgao))
+
+def buscar_vagas_pci(conn, cursor):
+    """Concursos públicos com vaga para Assistente Social, em Minas Gerais (PCI Concursos).
+    A data da tabela é o fim das inscrições."""
+    print("\n📚 PCI CONCURSOS — iniciando varredura...")
+    try:
+        pagina = _pbh_get(PCI_URL)
+    except Exception as e:
+        print(f"   ⚠️  Erro ao abrir a página: {e}")
+        return
+    linhas = re.findall(
+        r'<div class="na"[^>]*data-url="([^"]+)"[^>]*>\s*<div class="ca"><a[^>]*>(.*?)</a>.*?'
+        r'<div class="cc">([^<]*)</div>\s*<div class="cd">(.*?)</div><div class="ce"><span>([^<]*)</span>',
+        pagina, re.S)
+    if not linhas:
+        print("   🔚 Nenhum concurso encontrado (a página pode ter mudado).")
+        return
+
+    hoje = datetime.now().date()
+    novos = 0
+    for link, orgao_raw, uf, cd, data_raw in linhas:
+        if uf.strip() != "MG":
+            continue
+        orgao = _limpa_html(orgao_raw)
+        if not _pci_orgao_regional(orgao):
+            continue
+        try:
+            fim = datetime.strptime(data_raw.strip(), "%d/%m/%Y").date()
+        except ValueError:
+            continue
+        if fim < hoje:
+            continue
+        if ja_enviada(cursor, link):
+            continue
+
+        partes = [p.strip() for p in _limpa_html(cd, sep=' | ').split('|') if p.strip()]
+        vagas = partes[0] if partes else "Vagas não informadas"
+        cargos = partes[1] if len(partes) > 1 else ""
+        nivel = partes[2] if len(partes) > 2 else ""
+        nivel_match, techs = calcular_match(f"{orgao} {cargos} assistente social")
+        techs_str = " · ".join(t.upper() for t in techs[:4]) if techs else "Verificar edital"
+        aviso = ("\n⚠️ <i>Cargos: vários. Confirme no edital se há vaga de Assistente Social.</i>"
+                 if re.search(r'(?i)v[aá]rios', cargos) else "")
+
+        mensagem = (
+            f"📚 <b>CONCURSO PÚBLICO · MG</b>\n\n"
+            f"🏛️ <b>Órgão:</b> {html_lib.escape(orgao)}\n"
+            f"👥 <b>Vagas:</b> {html_lib.escape(vagas)}\n"
+            f"👔 <b>Cargos:</b> {html_lib.escape(cargos or 'Não informado')}\n"
+            f"🎓 <b>Nível:</b> {html_lib.escape(nivel or 'Não informado')}\n"
+            f"📅 <b>Inscrições até:</b> <b>{fim.strftime('%d/%m/%Y')}</b>"
+            f"{aviso}\n"
+            f"📊 <b>Match:</b> {nivel_match} · <i>{techs_str}</i>\n\n"
+            f"🔗 <a href='{link}'>Ver detalhes e edital</a>"
+        )
+        registrar_e_enviar(conn, cursor, link, f"Concurso {orgao}", orgao, fim.strftime("%d/%m/%Y"), mensagem, "PCI", nivel_match)
+        novos += 1
+    print(f"   📋 {len(linhas)} concursos na lista, {novos} novos em MG na região.")
+
+# --- 13. SES-MG (SELEÇÃO SIMPLIFICADA) ---
+
+SES_ATIVO = True
+SES_URL   = "https://www.saude.mg.gov.br/processoseletivo/"
+
+def buscar_vagas_ses(conn, cursor):
+    """Secretaria de Estado de Saúde de MG: avisa processos de SELEÇÃO SIMPLIFICADA (PSS) em aberto.
+    Os de Seleção Interna (PSI) são só para servidores e ficam de fora."""
+    print("\n🩺 SES-MG — iniciando varredura...")
+    try:
+        pagina = _pbh_get(SES_URL)
+    except Exception as e:
+        print(f"   ⚠️  Erro ao abrir a página: {e}")
+        return
+    artigos = re.findall(r'<article class="([^"]*eael-grid-post[^"]*)"[^>]*>(.*?)</article>', pagina, re.S)
+    if not artigos:
+        print("   🔚 Nenhum item encontrado (a página pode ter mudado).")
+        return
+    abertos = 0
+    for classes, corpo in artigos:
+        if 'category-aberto' not in classes or not re.search(r'simplificada|pss', classes):
+            continue
+        a = re.search(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', corpo, re.S)
+        if not a:
+            continue
+        titulo = _limpa_html(a.group(2))
+        link = a.group(1)
+        chave = f"{link}#{_norm(titulo)[:80]}"   # o link é o mesmo para todos os editais
+        if ja_enviada(cursor, chave):
+            continue
+        abertos += 1
+        nivel_match, techs = calcular_match(titulo)
+        mensagem = (
+            f"🩺 <b>SES-MG · SELEÇÃO SIMPLIFICADA (aberta)</b>\n\n"
+            f"💼 <b>Edital:</b> {html_lib.escape(titulo)}\n"
+            f"⚠️ <i>Veja no edital se há cargo de Assistente Social e o prazo de inscrição.</i>\n\n"
+            f"🔗 <a href='{link}'>Abrir a página de processos seletivos</a>"
+        )
+        registrar_e_enviar(conn, cursor, chave, titulo, "SES-MG", datetime.now().strftime("%d/%m/%Y"), mensagem, "SES", nivel_match)
+    print(f"   📋 {len(artigos)} itens lidos, {abertos} seleções simplificadas abertas novas.")
+
 # --- MAIN ---
 
 def main():
@@ -1103,6 +1345,12 @@ def main():
         buscas_extras += [buscar_vagas_pbh_editais, buscar_vagas_pbh_saude]
     if ELO_ATIVO:
         buscas_extras.append(buscar_vagas_elo)
+    if TB_ATIVO:
+        buscas_extras.append(buscar_vagas_trabalhabrasil)
+    if PCI_ATIVO:
+        buscas_extras.append(buscar_vagas_pci)
+    if SES_ATIVO:
+        buscas_extras.append(buscar_vagas_ses)
     for busca in buscas_extras:
         try:
             busca(conn, cursor)

@@ -29,6 +29,11 @@ O bot lê a seção "Processos seletivos em andamento" do [Instituto Elo](https:
 
 O alerta traz o link de inscrição e o do edital. Para desligar, use `ELO_ATIVO = False` no `main.py`.
 
+## Outras fontes (Trabalha Brasil, PCI Concursos e SES-MG)
+- **Trabalha Brasil:** vagas de assistente social, analista social e técnico social em BH, Contagem e Betim, incluindo organizações sociais como Apae e Pemse. O bot abre cada vaga nova, lê a data de publicação e ignora as de mais de 120 dias (`TB_DIAS_MAX`), porque o site mantém anúncios antigos. Desligue com `TB_ATIVO = False`.
+- **PCI Concursos:** concursos públicos de Minas Gerais com vaga de Assistente Social, em prefeituras das cidades permitidas e órgãos estaduais. A data é o fim das inscrições, e concursos já encerrados são ignorados. Quando o cargo é "Vários Cargos", o alerta pede para confirmar no edital. Desligue com `PCI_ATIVO = False`.
+- **SES-MG:** avisa processos de **Seleção Simplificada** abertos (os de Seleção Interna são só para servidores). Desligue com `SES_ATIVO = False`.
+
 ## O que o bot NÃO cobre
 Quatre, URBEL, concursos e tribunais não passam pelo bot. Continue conferindo:
 - https://quatre.com.br/oportunidades/assistente-social-bh/
