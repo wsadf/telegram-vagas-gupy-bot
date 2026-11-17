@@ -270,9 +270,11 @@ def ja_enviada(cursor, link):
 def enviar_telegram(mensagem):
     if DRY_RUN:
         print("   [DRY_RUN] " + re.sub(r'<[^>]+>', '', mensagem).replace("\n\n", "\n"))
-        return
+        return True
     # CHAT_ID_GRUPO aceita vários destinos separados por vírgula (ex.: "123456789,-1001234567890").
     # Cada destino recebe a mensagem; a falha em um não impede o envio aos outros.
+    # Retorna True se pelo menos um destino recebeu (só então a vaga é marcada como enviada).
+    entregue = False
     for chat_id in [c.strip() for c in (CHAT_ID or "").split(",") if c.strip()]:
         payload = {
             "chat_id":                  chat_id,
@@ -284,18 +286,24 @@ def enviar_telegram(mensagem):
             r = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json=payload, timeout=10)
             if r.status_code != 200:
                 print(f"⚠️  Telegram recusou (chat {chat_id}): {r.text}")
+            else:
+                entregue = True
         except Exception as e:
             print(f"❌ Erro Telegram (chat {chat_id}): {e}")
+    return entregue
 
 def registrar_e_enviar(conn, cursor, link, titulo, empresa, data_f, mensagem, fonte, nivel_match):
     chave = _chave_sessao(titulo, empresa)
     if chave in _enviados_sessao:
         print(f"   🔁 Duplicata (sessão): {titulo[:50]}")
         return
+    if not enviar_telegram(mensagem):
+        # Não marca como enviada: a vaga será tentada de novo na próxima execução.
+        print(f"   ❌ Não entregue no Telegram (será tentada de novo): {titulo[:50]}")
+        return
     _enviados_sessao.add(chave)
     cursor.execute('INSERT OR IGNORE INTO vagas_enviadas VALUES (?, ?, ?)', (link, data_f, titulo))
     conn.commit()
-    enviar_telegram(mensagem)
     print(f"   ✅ [{nivel_match}] {titulo[:50]}...")
     time.sleep(2)
 
