@@ -145,6 +145,7 @@ GAPS_ELIMINATORIOS = [
     "motorista", "recepcionista", "marketing", "social media", "mídias sociais",
     "midias sociais", "redes sociais", "social selling", "tráfego", "trafego",
     "voluntári", "voluntari",
+    "social midia", "social mídia", "mídia social", "midia social", "mídias", "midias",
 ]
 
 # Vagas dessas empresas são ignoradas em todas as fontes (busca parcial).
